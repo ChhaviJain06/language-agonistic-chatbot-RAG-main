@@ -1,0 +1,8 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    { "name": "BHASHA API (uvicorn)", "type": "debugpy", "request": "launch", "module": "uvicorn",
+      "args": ["server.main:app", "--reload", "--port", "8000"], "envFile": "${workspaceFolder}/.env" },
+    { "name": "Pytest", "type": "debugpy", "request": "launch", "module": "pytest", "args": ["-x"] }
+  ]
+}

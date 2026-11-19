@@ -1,0 +1,19 @@
+# Public HTTPS entry point. Caddy gets and renews a real Let's Encrypt certificate for
+# {$DOMAIN} on its own — that is what lets other people's browsers use the microphone.
+# Ports 80 AND 443 must be reachable from the internet (80 is used for the certificate check).
+{$DOMAIN} {
+	encode gzip
+
+	# LiveKit signalling + its HTTP API (media itself goes straight to LiveKit over UDP/TCP).
+	handle /rtc* {
+		reverse_proxy livekit:7880
+	}
+	handle /twirp* {
+		reverse_proxy livekit:7880
+	}
+
+	# Everything else (UI + API) is the app container.
+	handle {
+		reverse_proxy app:8000
+	}
+}

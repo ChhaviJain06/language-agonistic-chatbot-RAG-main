@@ -1,0 +1,94 @@
+# Infrastructure for every profile. The profile changes which *providers* the app talks to
+# (env vars), not which infrastructure it needs. Everything here is free/open-source.
+#
+#   docker compose up -d postgres livekit caddy          # core (cloud / hybrid dev)
+#   docker compose --profile graph up -d neo4j           # + knowledge graph
+#   docker compose --profile onprem up -d ollama         # + local LLM (needs GPU for speed)
+#   docker compose --profile app up -d --build app       # + the app itself in a container
+#
+# Databases listen on 127.0.0.1 only — never expose them to the network with default passwords.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bhasha}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bhasha}
+      POSTGRES_DB: ${POSTGRES_DB:-bhasha}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # First init only; the app re-applies schema.sql idempotently at every start.
+      - ./server/rag/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bhasha} -d ${POSTGRES_DB:-bhasha}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  livekit:
+    image: livekit/livekit-server:v1.13
+    command: --config /etc/livekit.yaml
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-devsecret_change_me_at_least_32_chars}"
+    volumes:
+      - ./infra/livekit/livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7880:7880"          # signalling (ws)
+      - "7881:7881"          # TCP fallback for WebRTC
+      - "50000-50100:50000-50100/udp"
+
+  caddy:
+    image: caddy:2
+    depends_on: [livekit]
+    # `tls internal` mints a self-signed cert — browsers need getUserMedia over a secure origin.
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+    ports: ["8443:8443"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+  neo4j:
+    image: neo4j:5-community
+    profiles: [graph, hybrid, onprem]
+    environment:
+      NEO4J_AUTH: "${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-bhasha_graph_pw}"
+    ports:
+      - "127.0.0.1:7687:7687"   # bolt (server code talks to this)
+      - "127.0.0.1:7474:7474"   # browser UI, for eyeballing the graph
+    volumes:
+      - neo4jdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider localhost:7474 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Local open-source LLM for the onprem profile. Run `docker compose exec ollama ollama pull
+  # qwen2.5:7b-instruct` once while online. CPU works but is slow; a GPU is strongly advised.
+  ollama:
+    image: ollama/ollama:latest
+    profiles: [onprem]
+    ports: ["127.0.0.1:11434:11434"]
+    volumes:
+      - ollamadata:/root/.ollama
+
+  app:
+    build: .
+    profiles: [app]
+    env_file: [.env]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-bhasha}:${POSTGRES_PASSWORD:-bhasha}@postgres:5432/${POSTGRES_DB:-bhasha}
+      LIVEKIT_URL: ws://livekit:7880
+      LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:-ws://localhost:7880}   # browser-reachable address
+      NEO4J_URI: bolt://neo4j:7687
+      OLLAMA_BASE_URL: http://ollama:11434
+    depends_on:
+      postgres: {condition: service_healthy}
+    ports: ["8000:8000"]
+
+volumes:
+  pgdata:
+  caddydata:
+  neo4jdata:
+  ollamadata:

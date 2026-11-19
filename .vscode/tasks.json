@@ -1,0 +1,9 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "Start infra (postgres + livekit + caddy)", "type": "shell",
+      "command": "docker compose up -d postgres livekit caddy" },
+    { "label": "Web dev server", "type": "shell", "command": "npm --prefix web run dev", "isBackground": true },
+    { "label": "Run tests", "type": "shell", "command": ".venv/bin/python -m pytest -q" }
+  ]
+}

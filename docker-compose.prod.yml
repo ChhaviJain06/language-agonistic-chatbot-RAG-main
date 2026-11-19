@@ -1,0 +1,38 @@
+# Public deployment overlay. Use together with the base file:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile app up -d --build
+# Needs these in .env: DOMAIN, POSTGRES_PASSWORD, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_PUBLIC_URL.
+# `!override` / `!reset` replace the base file's values instead of adding to them (Compose >= 2.24).
+
+services:
+  postgres:
+    restart: unless-stopped
+
+  livekit:
+    restart: unless-stopped
+    volumes:
+      - ./infra/livekit/livekit.prod.yaml:/etc/livekit.yaml:ro
+    # 7880 stays internal (Caddy proxies to it); only media ports are public.
+    ports: !override
+      - "7881:7881"
+      - "50000-50100:50000-50100/udp"
+
+  caddy:
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./infra/caddy/Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+    ports: !override
+      - "80:80"
+      - "443:443"
+    depends_on: [livekit, app]
+
+  app:
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-bhasha}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-bhasha}
+      LIVEKIT_URL: ws://livekit:7880
+      LIVEKIT_PUBLIC_URL: wss://${DOMAIN}
+    # Only reachable through Caddy.
+    ports: !reset []
